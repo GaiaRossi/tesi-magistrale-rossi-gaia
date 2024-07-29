@@ -1,0 +1,100 @@
+apiVersion: test.dev/v1
+kind: CyberPhysicalApplication
+metadata:
+  name: "cpa-1"
+spec:
+  source:
+  twinType: "simple"
+  twinOf: 
+   - "PhysicalTwin1"
+  requirements:
+    preferredAffinity: "edge"
+    odte: 0.5
+  deployments:
+    - type: "Kubernetes"
+      affinity: "edge"
+      configs:
+        - type: "Deployment"
+          metadata:
+            namespace: default
+            name: dt-1-deployment-edge
+            labels:
+              app: dt-1
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: dt-1
+            template:
+              metadata:
+                labels:
+                  app: dt-1
+                annotations:
+                  prometheusUrl: "http://localhost:30080"
+                  prometheus.io/scrape: "true"
+                  prometheus.io/port: "8000"
+                  prometheus.io/path: "/metrics"
+              spec:
+                containers:
+                - name: dt-1-edge
+                  image: "gaiarossiunife/test-simple-app:v7"
+                  ports:
+                  - containerPort: 8000
+
+        - type: "Service"
+          metadata:
+            namespace: default
+            name: dt-1-service
+          spec:
+            selector:
+              app: dt-1
+            ports:
+              - name: http
+                port: 8000
+                targetPort: 8000
+                nodePort: 30090
+            type: NodePort
+    
+    - type: "Kubernetes"
+      affinity: "mec"
+      configs:
+        - type: "Deployment"
+          metadata:
+            namespace: default
+            name: dt-1-deployment-mec
+            labels:
+              app: dt-1
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: dt-1
+            template:
+              metadata:
+                labels:
+                  app: dt-1
+                annotations:
+                  prometheusUrl: "http://localhost:30080"
+                  prometheus.io/scrape: "true"
+                  prometheus.io/port: "8000"
+                  prometheus.io/path: "/metrics"
+              spec:
+                containers:
+                - name: dt-1-mec
+                  image: "gaiarossiunife/test-simple-app:v7"
+                  ports:
+                  - containerPort: 8000
+
+        - type: "Service"
+          metadata:
+            namespace: default
+            name: dt-1-service
+          spec:
+            selector:
+              app: dt-1
+            ports:
+              - name: http
+                port: 8000
+                targetPort: 8000
+                nodePort: 30090
+            type: NodePort

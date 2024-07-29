@@ -30,7 +30,7 @@ spec:
                 labels:
                   app: dt-1
                 annotations:
-                  prometheusUrl: "http://localhost:30080"
+                  prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
                   prometheus.io/scrape: "true"
                   prometheus.io/port: "8000"
                   prometheus.io/path: "/metrics"
@@ -74,7 +74,7 @@ spec:
                 labels:
                   app: dt-1
                 annotations:
-                  prometheusUrl: "http://localhost:30080"
+                  prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
                   prometheus.io/scrape: "true"
                   prometheus.io/port: "8000"
                   prometheus.io/path: "/metrics"

@@ -51,7 +51,7 @@ def k8s_delete_service(k8s_apps, k8s_core, service, namespace):
 
 @kopf.on.create("cyberphysicalapplications")
 def create_fn(spec, name, namespace, logger, **kwargs):
-    config.load_kube_config()
+    # config.load_kube_config()
 
     k8s_apps_v1 = client.AppsV1Api()
     k8s_core_v1 = client.CoreV1Api()
@@ -98,8 +98,8 @@ def update_cpa(body, **kwargs):
 
 @kopf.daemon('cyberphysicalapplications', cancellation_backoff=1.0, cancellation_timeout=3.0, initial_delay=5)
 async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
-    global objs
     while not stopped:
+        logger.info("Daemon listening...")
         k8s_apps_v1 = client.AppsV1Api()
         k8s_core_v1 = client.CoreV1Api()
         preferredAffinity = body.get("spec").get("requirements").get("preferredAffinity")
@@ -125,22 +125,24 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
         try:
             resp = requests.get(query_url)
         except:
-            print("Prometheus not available")
+            logger.info("Prometheus not available")
         try:
             odte = float(json.loads(resp.text)["data"]["result"][0]["value"][1])
         except:
-            print("ODTE not available")
+            logger.info("ODTE not available")
             odte = None
 
+        logger.debug(f"Last odte read: {odte}")
+
         if odte and odte < odte_threshold:
-            print("odte below threshold")
+            logger.info("odte below threshold")
             if len(deployments) > 1:
                 next_depl = random.randint(0, len(deployments) - 1)
                 try:
                     resp = k8s_apps_v1.delete_namespaced_deployment(depl_name, namespace=depl_namespace)
                 except:
                     pass
-                print(f"Deployment deleted. Name='{depl_name}'")
+                logger.info(f"Deployment deleted. Name='{depl_name}'")
 
                 # attendo terminazione pod
                 terminated = False
@@ -151,7 +153,7 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
                         if len(resp.items) == 0:
                             terminated = True
                     except:
-                        print("Cannot list pods")
+                        logger.info("Cannot list pods")
                 
 
                 deployment = deployments[next_depl]
@@ -173,9 +175,9 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
                             kopf.label(data, {"createdFor": f"{name}"})
                             resp = k8s_apps_v1.create_namespaced_deployment(
                                 body=data, namespace=namespace)
-                            print(f"Deployment created. Name='{resp.metadata.name}'")
+                            logger.info(f"Deployment created. Name='{resp.metadata.name}'")
                         except:
-                            pass
+                            logger.info("Exception creating replace deployment")
         
 
         await stopped.wait(1)

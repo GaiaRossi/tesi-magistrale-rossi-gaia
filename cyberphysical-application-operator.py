@@ -35,14 +35,14 @@ def k8s_deploy_service(k8s_apps, k8s_core, deployment, namespace, name):
                         body=data, namespace=namespace)
                     print(f"Service created. Name='{resp.metadata.name}'")
 
-def k8s_delete_deployment(k8s_apps, k8s_core, deployment, namespace):
+def k8s_delete_deployment(k8s_apps, k8s_core, deployment):
     depl_name = deployment.metadata.name
     depl_namespace = deployment.metadata.namespace
 
     resp = k8s_apps.delete_namespaced_deployment(depl_name, namespace=depl_namespace)
     print(f"Deployment deleted. Name='{depl_name}'")
 
-def k8s_delete_service(k8s_apps, k8s_core, service, namespace):
+def k8s_delete_service(k8s_apps, k8s_core, service):
     service_name = service.metadata.name
     service_namespace = service.metadata.namespace
 
@@ -83,13 +83,13 @@ def delete_fn(spec, name, namespace, logger, **kwargs):
     label_selector = f"createdFor={name}"
     resp = k8s_apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
     current_depl = resp.items[0]
-    k8s_delete_deployment(k8s_apps_v1, k8s_core_v1, current_depl, namespace)
+    k8s_delete_deployment(k8s_apps_v1, k8s_core_v1, current_depl)
 
     depl_namespace = current_depl.metadata.namespace
     label_selector = f"createdFor={name}"
     resp = k8s_core_v1.list_namespaced_service(depl_namespace, label_selector=label_selector)
     service = resp.items[0]
-    k8s_delete_service(k8s_apps_v1, k8s_core_v1, service, namespace)
+    k8s_delete_service(k8s_apps_v1, k8s_core_v1, service)
 
 
 @kopf.on.update('cyberphysicalapplications')
@@ -102,35 +102,37 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
         logger.info("Daemon listening...")
         k8s_apps_v1 = client.AppsV1Api()
         k8s_core_v1 = client.CoreV1Api()
-        preferredAffinity = body.get("spec").get("requirements").get("preferredAffinity")
         odte_threshold = float(body.get("spec").get("requirements").get("odte"))
         deployments = body.get("spec").get("deployments")
-        current_deployment = None
+        current_depl = None
         prometheus_url = None
 
-        for deployment in deployments:
-            if deployment.get("affinity") == preferredAffinity:
-                current_deployment = deployment
+        label_selector = f"createdFor={name}"
+        try:
+            resp = k8s_apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+            current_depl = resp.items[0]
+        except:
+            logger.info("No deployment found")
+            await stopped.wait(1)
+            continue
 
-        configs = current_deployment.get("configs")
-        for config in configs:
-            if config.get("type") == "Deployment":
-                prometheus_url = config.get("spec").get("template").get("metadata").get("annotations").get("prometheusUrl")
-                app_name = config.get("spec").get("template").get("metadata").get("labels").get("app")
-                depl_name = config.get("metadata").get("name")
-                depl_namespace = config.get("metadata").get("namespace")
-        
+        app_name = current_depl.metadata.labels["app"]
+        prometheus_url = current_depl.spec.template.metadata.annotations["prometheusUrl"]
         query_url = f"{prometheus_url}/api/v1/query?query=odte[app=\"{app_name}\"]"
         query_url = query_url.replace("[", "{").replace("]", "}")
         try:
             resp = requests.get(query_url)
         except:
             logger.info("Prometheus not available")
+            await stopped.wait(1)
+            continue
         try:
             odte = float(json.loads(resp.text)["data"]["result"][0]["value"][1])
         except:
             logger.info("ODTE not available")
             odte = None
+            await stopped.wait(1)
+            continue
 
         logger.debug(f"Last odte read: {odte}")
 
@@ -139,10 +141,11 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
             if len(deployments) > 1:
                 next_depl = random.randint(0, len(deployments) - 1)
                 try:
-                    resp = k8s_apps_v1.delete_namespaced_deployment(depl_name, namespace=depl_namespace)
+                    depl_name = current_depl.metadata.name
+                    k8s_delete_deployment(k8s_apps_v1, k8s_core_v1, current_depl)
+                    logger.info(f"Deployment deleted. Name='{depl_name}'")
                 except:
                     pass
-                logger.info(f"Deployment deleted. Name='{depl_name}'")
 
                 # attendo terminazione pod
                 terminated = False

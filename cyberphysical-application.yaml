@@ -53,7 +53,6 @@ spec:
                       type:
                         type: string
                         enum:
-                          - "Helm"
                           - "Kubernetes"
                       affinity:
                         type: string
@@ -62,16 +61,17 @@ spec:
                         items: 
                           type: object
                           properties:
-                            type:
+                            apiVersion:
                               type: string
-                              enum:
-                                - "ConfigMap"
-                                - "Deployment"
-                                - "Service"
+                            kind:
+                              type: string
                             metadata:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
                             spec:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            status:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
     

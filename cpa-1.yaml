@@ -8,13 +8,14 @@ spec:
   twinOf: 
    - "PhysicalTwin1"
   requirements:
-    preferredAffinity: "edge"
+    preferredAffinity: "mec"
     odte: 0.5
   deployments:
     - type: "Kubernetes"
       affinity: "edge"
       configs:
-        - type: "Deployment"
+        - apiVersion: apps/v1
+          kind: Deployment
           metadata:
             namespace: default
             name: dt-1-deployment-edge
@@ -30,7 +31,8 @@ spec:
                 labels:
                   app: dt-1
                 annotations:
-                  prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
+                  # prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
+                  prometheusUrl: "http://localhost:30080"
                   prometheus.io/scrape: "true"
                   prometheus.io/port: "8000"
                   prometheus.io/path: "/metrics"
@@ -41,7 +43,8 @@ spec:
                   ports:
                   - containerPort: 8000
 
-        - type: "Service"
+        - apiVersion: v1
+          kind: Service
           metadata:
             namespace: default
             name: dt-1-service
@@ -58,7 +61,8 @@ spec:
     - type: "Kubernetes"
       affinity: "mec"
       configs:
-        - type: "Deployment"
+        - apiVersion: apps/v1
+          kind: Deployment
           metadata:
             namespace: default
             name: dt-1-deployment-mec
@@ -74,7 +78,8 @@ spec:
                 labels:
                   app: dt-1
                 annotations:
-                  prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
+                  # prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
+                  prometheusUrl: "http://localhost:30080"
                   prometheus.io/scrape: "true"
                   prometheus.io/port: "8000"
                   prometheus.io/path: "/metrics"
@@ -85,7 +90,8 @@ spec:
                   ports:
                   - containerPort: 8000
 
-        - type: "Service"
+        - apiVersion: v1
+          kind: Service
           metadata:
             namespace: default
             name: dt-1-service

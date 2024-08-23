@@ -1,77 +1,154 @@
-import kopf, logging, yaml, requests, json, random
+import kopf, logging, yaml, requests, json, random, re
 from kubernetes import client, config, utils
+from kubernetes.utils import create_from_dict
 
-def k8s_deploy_deployment(k8s_apps, k8s_core, deployment, namespace, name):
-        for depl_config in deployment.get("configs"):
-            k8sObjectType = depl_config.get("type")
-            if k8sObjectType == "Deployment":
-                depl_metadata = depl_config.get("metadata")
-                depl_spec = depl_config.get("spec")
+UPPER_FOLLOWED_BY_LOWER_RE = re.compile('(.)([A-Z][a-z]+)')
+LOWER_OR_NUM_FOLLOWED_BY_UPPER_RE = re.compile('([a-z0-9])([A-Z])')
 
-                # aggiunta affinity
-                depl_spec["template"]["spec"].update({"nodeSelector": {"zone" : deployment.get("affinity")}})
-                
-                template = open("create-deployment.yml", 'rt').read()
-                depl = template.format(metadata=depl_metadata, spec=depl_spec)
+def delete_from_dict(k8s_client, data, verbose=False, namespace='default',
+                     **kwargs):
+    """
+    Perform an action from a dictionary containing valid kubernetes
+    API object (i.e. List, Service, etc).
 
-                data = yaml.safe_load(depl)
-                kopf.label(data, {"createdFor": f"{name}"})
-                resp = k8s_apps.create_namespaced_deployment(
-                    body=data, namespace=namespace)
-                print(f"Deployment created. Name='{resp.metadata.name}'")
+    Input:
+    k8s_client: an ApiClient object, initialized with the client args.
+    data: a dictionary holding valid kubernetes objects
+    verbose: If True, print confirmation from the create action.
+        Default is False.
+    namespace: string. Contains the namespace to create all
+        resources inside. The namespace must preexist otherwise
+        the resource creation will fail. If the API object in
+        the yaml file already contains a namespace definition
+        this parameter has no effect.
 
-def k8s_deploy_service(k8s_apps, k8s_core, deployment, namespace, name):
-            for depl_config in deployment.get("configs"):
-                k8sObjectType = depl_config.get("type")
-                if k8sObjectType == "Service":
-                    service_metadata = depl_config.get("metadata")
-                    service_spec = depl_config.get("spec")
-                    
-                    template = open("create-service.yml", 'rt').read()
-                    service = template.format(metadata=service_metadata, spec=service_spec)
-                    data = yaml.safe_load(service)
-                    kopf.label(data, {"createdFor": f"{name}"})
-                    resp = k8s_core.create_namespaced_service(
-                        body=data, namespace=namespace)
-                    print(f"Service created. Name='{resp.metadata.name}'")
+    Returns:
+        The created kubernetes API objects.
 
-def k8s_delete_deployment(k8s_apps, k8s_core, deployment):
-    depl_name = deployment.metadata.name
-    depl_namespace = deployment.metadata.namespace
+    Raises:
+        FailToCreateError which holds list of `client.rest.ApiException`
+        instances for each object that failed to create.
+    """
+    # If it is a list type, will need to iterate its items
+    api_exceptions = []
+    k8s_objects = []
 
-    resp = k8s_apps.delete_namespaced_deployment(depl_name, namespace=depl_namespace)
-    print(f"Deployment deleted. Name='{depl_name}'")
+    if "List" in data["kind"]:
+        # Could be "List" or "Pod/Service/...List"
+        # This is a list type. iterate within its items
+        kind = data["kind"].replace("List", "")
+        for yml_object in data["items"]:
+            # Mitigate cases when server returns a xxxList object
+            # See kubernetes-client/python#586
+            if kind != "":
+                yml_object["apiVersion"] = data["apiVersion"]
+                yml_object["kind"] = kind
+            try:
+                deleted = delete_from_yaml_single_item(
+                    k8s_client, yml_object, verbose, namespace=namespace,
+                    **kwargs)
+                k8s_objects.append(deleted)
+            except client.rest.ApiException as api_exception:
+                api_exceptions.append(api_exception)
+    else:
+        # This is a single object. Call the single item method
+        try:
+            deleted = delete_from_yaml_single_item(
+                k8s_client, data, verbose, namespace=namespace, **kwargs)
+            k8s_objects.append(deleted)
+        except client.rest.ApiException as api_exception:
+            api_exceptions.append(api_exception)
 
-def k8s_delete_service(k8s_apps, k8s_core, service):
-    service_name = service.metadata.name
-    service_namespace = service.metadata.namespace
+    # In case we have exceptions waiting for us, raise them
+    if api_exceptions:
+        raise FailToDeleteError(api_exceptions)
 
-    resp = k8s_core.delete_namespaced_service(service_name, namespace=service_namespace)
-    print(f"Service deleted. Name='{service_name}'")
+    return k8s_objects
+
+def delete_from_yaml_single_item(
+        k8s_client, yml_object, verbose=False, **kwargs):
+    group, _, version = yml_object["apiVersion"].partition("/")
+    if version == "":
+        version = group
+        group = "core"
+    # Take care for the case e.g. api_type is "apiextensions.k8s.io"
+    # Only replace the last instance
+    group = "".join(group.rsplit(".k8s.io", 1))
+    # convert group name from DNS subdomain format to
+    # python class name convention
+    group = "".join(word.capitalize() for word in group.split('.'))
+    fcn_to_call = "{0}{1}Api".format(group, version.capitalize())
+    k8s_api = getattr(client, fcn_to_call)(k8s_client)
+    # Replace CamelCased action_type into snake_case
+    kind = yml_object["kind"]
+    kind = UPPER_FOLLOWED_BY_LOWER_RE.sub(r'\1_\2', kind)
+    kind = LOWER_OR_NUM_FOLLOWED_BY_UPPER_RE.sub(r'\1_\2', kind).lower()
+    # Expect the user to create namespaced objects more often
+    if hasattr(k8s_api, "delete_namespaced_{0}".format(kind)):
+        # Decide which namespace we are going to put the object in,
+        # if any
+        if "namespace" in yml_object["metadata"]:
+            namespace = yml_object["metadata"]["namespace"]
+            kwargs['namespace'] = namespace
+        if "name" in yml_object["metadata"]:
+            name = yml_object["metadata"]["name"]
+            kwargs['name'] = name
+        resp = getattr(k8s_api, "delete_namespaced_{0}".format(kind))(**kwargs)
+    else:
+        kwargs.pop('namespace', None)
+        kwargs.pop('name', None)
+        resp = getattr(k8s_api, "delete_{0}".format(kind))(**kwargs)
+    if verbose:
+        msg = "{0} deleted.".format(kind)
+        if hasattr(resp, 'status'):
+            msg += " status='{0}'".format(str(resp.status))
+        print(msg)
+    return resp
+
+class FailToDeleteError(Exception):
+    """
+    An exception class for handling error if an error occurred when
+    handling a yaml file.
+    """
+
+    def __init__(self, api_exceptions):
+        self.api_exceptions = api_exceptions
+
+    def __str__(self):
+        msg = ""
+        for api_exception in self.api_exceptions:
+            msg += "Error from server ({0}): {1}".format(
+                api_exception.reason, api_exception.body)
+        return msg
 
 @kopf.on.create("cyberphysicalapplications")
 def create_fn(spec, name, namespace, logger, **kwargs):
-    # config.load_kube_config()
-
-    k8s_apps_v1 = client.AppsV1Api()
-    k8s_core_v1 = client.CoreV1Api()
+    k8s_client = client.ApiClient()
 
     deployments = spec.get("deployments")
     preferred_affinity = spec.get("requirements").get("preferredAffinity")
 
     if preferred_affinity == "":
         deployment_type = deployments[0].get("type")
+        deployment_configs = deployments[0].get("configs")
         if deployment_type == "Kubernetes":
-            k8s_deploy_deployment(k8s_apps_v1, k8s_core_v1, deployments[0], namespace, name)
-            k8s_deploy_service(k8s_apps_v1, k8s_core_v1, deployments[0], namespace, name)
+            for config in deployment_configs:
+                if config.get("kind") == "Deployment":
+                    config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployments[0].get("affinity")}})
+                kopf.label(config, {"createdFor": f"{name}"})
+                create_from_dict(k8s_client, config)
   
     else:
         for deployment in deployments:
             deployment_type = deployment.get("type")
             deployment_affinity = deployment.get("affinity")
             if deployment_type == "Kubernetes" and deployment_affinity == preferred_affinity:
-                k8s_deploy_deployment(k8s_apps_v1, k8s_core_v1, deployment, namespace, name)
-                k8s_deploy_service(k8s_apps_v1, k8s_core_v1, deployment, namespace, name)
+                deployment_configs = deployment.get("configs")
+                for config in deployment_configs:   
+                    if config.get("kind") == "Deployment":
+                        config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployment.get("affinity")}})
+                    kopf.label(config, {"createdFor": f"{name}"})
+                    create_from_dict(k8s_client, config)
 
 
 
@@ -83,23 +160,24 @@ def delete_fn(spec, name, namespace, logger, **kwargs):
     label_selector = f"createdFor={name}"
     resp = k8s_apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
     current_depl = resp.items[0]
-    k8s_delete_deployment(k8s_apps_v1, k8s_core_v1, current_depl)
+    resp = k8s_apps_v1.delete_namespaced_deployment(current_depl.metadata.name, namespace=current_depl.metadata.namespace)
 
     depl_namespace = current_depl.metadata.namespace
     label_selector = f"createdFor={name}"
     resp = k8s_core_v1.list_namespaced_service(depl_namespace, label_selector=label_selector)
     service = resp.items[0]
-    k8s_delete_service(k8s_apps_v1, k8s_core_v1, service)
+    resp = k8s_core_v1.delete_namespaced_service(service.metadata.name, namespace=service.metadata.namespace)
 
 
 @kopf.on.update('cyberphysicalapplications')
-def update_cpa(body, **kwargs):
+def update_fn(body, **kwargs):
     pass
 
 @kopf.daemon('cyberphysicalapplications', cancellation_backoff=1.0, cancellation_timeout=3.0, initial_delay=5)
 async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
     while not stopped:
         logger.info("Daemon listening...")
+        k8s_client = client.ApiClient()
         k8s_apps_v1 = client.AppsV1Api()
         k8s_core_v1 = client.CoreV1Api()
         odte_threshold = float(body.get("spec").get("requirements").get("odte"))
@@ -141,9 +219,7 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
             if len(deployments) > 1:
                 next_depl = random.randint(0, len(deployments) - 1)
                 try:
-                    depl_name = current_depl.metadata.name
-                    k8s_delete_deployment(k8s_apps_v1, k8s_core_v1, current_depl)
-                    logger.info(f"Deployment deleted. Name='{depl_name}'")
+                    resp = k8s_apps_v1.delete_namespaced_deployment(current_depl.metadata.name, namespace=current_depl.metadata.namespace)
                 except:
                     pass
 
@@ -160,25 +236,14 @@ async def check_odte(stopped, name, spec, namespace, body, logger, **kwargs):
                 
 
                 deployment = deployments[next_depl]
-                for depl_config in deployment.get("configs"):
-                    k8sObjectType = depl_config.get("type")
-                    if k8sObjectType == "Deployment":
-                        depl_metadata = depl_config.get("metadata")
-                        depl_spec = depl_config.get("spec")
-
-                        # aggiunta affinity
-                        depl_spec["template"]["spec"].update({"nodeSelector": {"zone" : deployment.get("affinity")}})
-                        
-                        template = open("create-deployment.yml", 'rt').read()
-                        depl = template.format(metadata=depl_metadata, spec=depl_spec)
-
-                        data = yaml.safe_load(depl)
-
+                deployment_configs = deployment.get("configs") 
+                for config in deployment_configs:
+                    if config.get("kind") == "Deployment":
+                        config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployment.get("affinity")}})
+                        kopf.label(config, {"createdFor": f"{name}"})
                         try:
-                            kopf.label(data, {"createdFor": f"{name}"})
-                            resp = k8s_apps_v1.create_namespaced_deployment(
-                                body=data, namespace=namespace)
-                            logger.info(f"Deployment created. Name='{resp.metadata.name}'")
+                            create_from_dict(k8s_client, config)
+                            logger.info(f"Deployment replaced.")
                         except:
                             logger.info("Exception creating replace deployment")
         

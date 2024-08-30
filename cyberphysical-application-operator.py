@@ -9,31 +9,26 @@ def create_fn(spec, name, namespace, logger, **kwargs):
     deployments = spec.get("deployments")
     preferred_affinity = spec.get("requirements").get("preferredAffinity")
 
+    deployment_affinity = None
+    deployment_configs = None
+
     if preferred_affinity == "":
-        deployment_type = deployments[0].get("type")
         deployment_configs = deployments[0].get("configs")
-        if deployment_type == "Kubernetes":
-            for config in deployment_configs:
-                if config.get("kind") == "Deployment":
-                    config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployments[0].get("affinity")}})
-                kopf.label(config, {"createdFor": f"{name}"})
-                kopf.adopt(config)
-                create_from_dict(k8s_client, config)
-  
+    
     else:
         for deployment in deployments:
-            deployment_type = deployment.get("type")
             deployment_affinity = deployment.get("affinity")
-            if deployment_type == "Kubernetes" and deployment_affinity == preferred_affinity:
+            if deployment_affinity == preferred_affinity:
                 deployment_configs = deployment.get("configs")
-                for config in deployment_configs:   
-                    if config.get("kind") == "Deployment":
-                        config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployment.get("affinity")}})
-                    kopf.label(config, {"createdFor": f"{name}"})
-                    kopf.adopt(config)
-                    create_from_dict(k8s_client, config)
-
-
+                break
+            
+    for config in deployment_configs:
+        if config.get("kind") == "Deployment" and deployment_affinity is not None:
+            config["spec"]["template"]["spec"].update({"nodeSelector": {"zone" : deployments[0].get("affinity")}})
+        kopf.label(config, {"createdFor": f"{name}"})
+        kopf.adopt(config)
+        create_from_dict(k8s_client, config)
+  
 
 @kopf.on.delete('cyberphysicalapplications')
 def delete_fn(spec, name, namespace, logger, **kwargs):

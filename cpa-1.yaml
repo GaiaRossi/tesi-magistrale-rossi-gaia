@@ -8,7 +8,7 @@ spec:
   twinOf: 
    - "PhysicalTwin1"
   requirements:
-    preferredAffinity: "mec"
+    preferredAffinity: ""
     odte: 0.5
   deployments:
     - type: "Kubernetes"

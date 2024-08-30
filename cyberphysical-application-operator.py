@@ -2,9 +2,6 @@ import kopf, logging, yaml, requests, json, random, re
 from kubernetes import client, config, utils
 from kubernetes.utils import create_from_dict
 
-UPPER_FOLLOWED_BY_LOWER_RE = re.compile('(.)([A-Z][a-z]+)')
-LOWER_OR_NUM_FOLLOWED_BY_UPPER_RE = re.compile('([a-z0-9])([A-Z])')
-
 @kopf.on.create("cyberphysicalapplications")
 def create_fn(spec, name, namespace, logger, **kwargs):
     k8s_client = client.ApiClient()

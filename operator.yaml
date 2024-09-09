@@ -85,4 +85,4 @@ spec:
       serviceAccountName: kopf-operator
       containers:
       - name: operator
-        image: gaiarossiunife/kopf-operator-tesi:v12
+        image: gaiarossiunife/kopf-operator-tesi:v13

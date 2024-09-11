@@ -7,6 +7,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install -r requirements.txt
 
 COPY ./simple-app.py /app
+COPY ./test-odte.py /app
 
 ENTRYPOINT ["python3"]
-CMD ["simple-app.py"]
+CMD ["test-odte.py"]

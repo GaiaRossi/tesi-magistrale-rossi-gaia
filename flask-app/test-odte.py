@@ -21,6 +21,6 @@ def reduce_odte():
         mock_odte = 0.1
 
 if __name__ == '__main__':
-	t = threading.Thread(target=reduce_odte, daemon=True)
+	t = threading.Thread(target=reduce_odte)
 	t.start()
 	app.run(host='0.0.0.0', port=8000, debug=False)

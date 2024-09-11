@@ -39,7 +39,8 @@ spec:
               spec:
                 containers:
                 - name: dt-1-edge
-                  image: "gaiarossiunife/test-simple-app:v7"
+                  image: "gaiarossiunife/test-simple-app:test"
+                  imagePullPolicy: Always
                   ports:
                   - containerPort: 8000
 
@@ -86,7 +87,8 @@ spec:
               spec:
                 containers:
                 - name: dt-1-mec
-                  image: "gaiarossiunife/test-simple-app:v7"
+                  image: "gaiarossiunife/test-simple-app:test"
+                  imagePullPolicy: Always
                   ports:
                   - containerPort: 8000
 

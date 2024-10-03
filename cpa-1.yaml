@@ -106,3 +106,51 @@ spec:
                 targetPort: 8000
                 nodePort: 30090
             type: NodePort
+
+    - type: "Kubernetes"
+      affinity: "cloud"
+      configs:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            namespace: default
+            name: dt-1-deployment-cloud
+            labels:
+              app: dt-1
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: dt-1
+            template:
+              metadata:
+                labels:
+                  app: dt-1
+                annotations:
+                  prometheusUrl: "http://prometheus-service.default.svc.cluster.local:9090"
+                  # prometheusUrl: "http://localhost:30080"
+                  prometheus.io/scrape: "true"
+                  prometheus.io/port: "8000"
+                  prometheus.io/path: "/metrics"
+              spec:
+                containers:
+                - name: dt-1-cloud
+                  image: "gaiarossiunife/test-simple-app:test"
+                  imagePullPolicy: Always
+                  ports:
+                  - containerPort: 8000
+
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: dt-1-service
+          spec:
+            selector:
+              app: dt-1
+            ports:
+              - name: http
+                port: 8000
+                targetPort: 8000
+                nodePort: 30090
+            type: NodePort
